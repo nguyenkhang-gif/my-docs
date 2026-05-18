@@ -1,39 +1,39 @@
 # OAuth Login — Google & Facebook
 
-## Mục tiêu
+## Goal
 
-Cho phép user đăng nhập bằng tài khoản Google (Gmail) hoặc Facebook mà không cần nhập mật khẩu. Sau khi OAuth thành công, backend trả về JWT giống hệt luồng login thông thường.
+Allow users to sign in with their Google (Gmail) or Facebook account without entering a password. After a successful OAuth flow, the backend returns a JWT identical to the standard login flow.
 
 ---
 
-## Quyết định thiết kế
+## Design Decisions
 
-### 1. Merge account theo email
+### 1. Account Merging by Email
 
-Nếu email từ OAuth đã tồn tại trong DB (đăng ký bằng email/password trước), hệ thống **tự động liên kết** thay vì báo lỗi. User đăng nhập được bằng cả hai cách.
+If the OAuth email already exists in the DB (registered via email/password before), the system **automatically links** the accounts instead of throwing an error. The user can then log in with either method.
 
-### 2. Trả token về frontend
+### 2. Returning the Token to the Frontend
 
-Callback từ Google/Facebook là redirect HTTP, không phải JSON response. Cách xử lý:
+The Google/Facebook callback is an HTTP redirect, not a JSON response. Handling:
 
 ```
 GET /api/auth/google/callback
-  → OAuthLoginUseCase trả về JWT
+  → OAuthLoginUseCase returns JWT
   → Redirect: {FRONTEND_URL}/auth/callback?token=<jwt>
-  → Frontend đọc query param, lưu vào localStorage
+  → Frontend reads query param, stores in localStorage
 ```
 
-### 3. User tạo qua OAuth không có password
+### 3. OAuth Users Have No Password
 
-`passwordHash` sẽ là chuỗi rỗng `""`. User không thể đăng nhập bằng email/password trừ khi họ tự set password sau.
+`passwordHash` will be an empty string `""`. The user cannot log in via email/password unless they manually set a password later.
 
-### 4. Username tự động sinh
+### 4. Auto-generated Username
 
-Lấy từ `profile.displayName` (Google) hoặc `profile.displayName` (Facebook), nếu trùng thì thêm suffix ngẫu nhiên (`_abc123`).
+Taken from `profile.displayName` (Google or Facebook). If it conflicts with an existing username, a random suffix is appended (`_abc123`).
 
 ---
 
-## Env vars cần thêm
+## Required Env Vars
 
 ```env
 # Google
@@ -46,17 +46,17 @@ FACEBOOK_APP_ID=
 FACEBOOK_APP_SECRET=
 FACEBOOK_CALLBACK_URL=http://localhost:4000/api/auth/facebook/callback
 
-# Frontend redirect sau OAuth
+# Frontend redirect after OAuth
 FRONTEND_URL=http://localhost:3000
 ```
 
 ---
 
-## Schema thay đổi
+## Schema Changes
 
 **File:** `src/infrastructure/databases/schemas/user.schema.ts`
 
-Thêm 3 field vào UserSchema:
+Add 3 fields to UserSchema:
 
 ```ts
 @Prop({ required: false })
@@ -69,11 +69,11 @@ facebookId?: string;
 provider: string;
 ```
 
-`passwordHash` bỏ `required: true` → `required: false` (vì OAuth user không có password).
+`passwordHash` — change `required: true` → `required: false` (OAuth users have no password).
 
 **File:** `src/core/domain/entities/user.entity.ts`
 
-Thêm field tương ứng:
+Add corresponding fields:
 
 ```ts
 googleId?: string;
@@ -83,7 +83,7 @@ provider?: string;
 
 ---
 
-## Các file cần tạo mới
+## New Files to Create
 
 ### 1. Strategies
 
@@ -102,7 +102,7 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
   }
 
   async validate(accessToken, refreshToken, profile, done) {
-    // trả về OAuthProfile để controller dùng
+    // return OAuthProfile for the controller to use
     done(null, {
       provider: 'google',
       providerId: profile.id,
@@ -116,20 +116,20 @@ export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
 
 **`src/infrastructure/auth/strategies/facebook.strategy.ts`**
 
-Tương tự, dùng `passport-facebook`, thêm `profileFields: ['id', 'emails', 'name', 'picture']`.
+Same pattern using `passport-facebook`, add `profileFields: ['id', 'emails', 'name', 'picture']`.
 
 ---
 
-### 2. Use-case
+### 2. Use Case
 
 **`src/use-case/auth/oauth-login.use-case.ts`**
 
 Logic:
-1. Tìm user theo `googleId`/`facebookId` (tùy provider)
-2. Nếu không tìm thấy → tìm theo email
-3. Nếu vẫn không tìm thấy → tạo user mới
-4. Nếu tìm thấy qua email nhưng chưa có `providerId` → gắn `providerId` vào user (liên kết account)
-5. Gọi `JwtService.sign()` → trả về `access_token`
+1. Find user by `googleId` / `facebookId` (depending on provider)
+2. If not found → find by email
+3. If still not found → create new user
+4. If found by email but missing `providerId` → attach `providerId` to user (link account)
+5. Call `JwtService.sign()` → return `access_token`
 
 ```ts
 async execute(profile: OAuthProfile): Promise<{ access_token: string }> {
@@ -137,7 +137,7 @@ async execute(profile: OAuthProfile): Promise<{ access_token: string }> {
 }
 ```
 
-**Interface `OAuthProfile`** (đặt ở `src/core/domain/interfaces/oauth-profile.interface.ts`):
+**`OAuthProfile` interface** (place at `src/core/domain/interfaces/oauth-profile.interface.ts`):
 
 ```ts
 export interface OAuthProfile {
@@ -151,11 +151,11 @@ export interface OAuthProfile {
 
 ---
 
-### 3. Repository thay đổi
+### 3. Repository Changes
 
 **`src/core/domain/repositories/user.repository.interface.ts`**
 
-Thêm 2 method:
+Add 2 methods:
 
 ```ts
 findByGoogleId(googleId: string): Promise<User | null>;
@@ -164,15 +164,15 @@ findByFacebookId(facebookId: string): Promise<User | null>;
 
 **`src/infrastructure/databases/repositories/user.repository.ts`**
 
-Implement 2 method trên.
+Implement both methods above.
 
 ---
 
-## Các file cần sửa
+## Files to Modify
 
 ### `src/presentation/controllers/auth.controller.ts`
 
-Thêm 4 route:
+Add 4 routes:
 
 ```ts
 // Google
@@ -203,46 +203,46 @@ async facebookCallback(@Request() req, @Res() res) {
 ### `src/infrastructure/auth/auth.module.ts`
 
 - Import `GoogleStrategy`, `FacebookStrategy`
-- Thêm `OAuthLoginUseCase` vào providers
+- Add `OAuthLoginUseCase` to providers
 
 ### `src/infrastructure/config/` (env validation)
 
-Thêm các key mới vào schema validation nếu có (optional, vì OAuth là tính năng có thể tắt).
+Add the new keys to the validation schema if applicable (optional — OAuth can be treated as a toggleable feature).
 
 ---
 
-## Thứ tự implement
+## Implementation Order
 
 ```
-1. Cài packages
+1. Install packages
    npm i passport-google-oauth20 passport-facebook
    npm i -D @types/passport-google-oauth20 @types/passport-facebook
 
-2. Thêm env vars vào .env
+2. Add env vars to .env
 
-3. Cập nhật User entity + UserSchema (thêm googleId, facebookId, provider)
+3. Update User entity + UserSchema (add googleId, facebookId, provider)
 
-4. Thêm findByGoogleId / findByFacebookId vào repo interface + implementation
+4. Add findByGoogleId / findByFacebookId to repo interface + implementation
 
-5. Tạo OAuthProfile interface
+5. Create OAuthProfile interface
 
-6. Tạo OAuthLoginUseCase
+6. Create OAuthLoginUseCase
 
-7. Tạo GoogleStrategy
+7. Create GoogleStrategy
 
-8. Tạo FacebookStrategy
+8. Create FacebookStrategy
 
-9. Sửa AuthController (thêm 4 route)
+9. Update AuthController (add 4 routes)
 
-10. Sửa AuthModule (đăng ký strategy + use-case mới)
+10. Update AuthModule (register new strategies + use case)
 
-11. Test thủ công qua browser
+11. Manual test via browser
 ```
 
 ---
 
-## Lưu ý
+## Notes
 
-- **Facebook yêu cầu HTTPS** cho callback URL khi đăng ký app production. Local dev có thể dùng `http://` nếu set app mode = Development trên Facebook Developer Console.
-- **Google cần verify app** nếu muốn dùng production. Dev mode chỉ cho phép test users đã được thêm vào danh sách.
-- `gender` là required trong schema hiện tại. User tạo qua OAuth sẽ không có gender → cần bỏ `required: true` hoặc set default `'other'`.
+- **Facebook requires HTTPS** for the callback URL in production. For local dev, `http://` works if the app mode is set to Development in the Facebook Developer Console.
+- **Google requires app verification** for production use. Dev mode only allows test users explicitly added to the allowlist.
+- `gender` is currently required in the schema. OAuth users won't have a gender value — either remove `required: true` or set a default of `'other'`.
